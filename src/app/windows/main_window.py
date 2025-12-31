@@ -1,58 +1,32 @@
 import sys
-import os
 from pathlib import Path
+import os
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QLabel, QPushButton, QLineEdit, 
-                             QStackedWidget, QFrame, QComboBox)
+                             QStackedWidget, QFrame, QComboBox, QFileDialog)
 from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QSize, QSettings
 from PySide6.QtGui import QPixmap, QIcon
+from about_window import AboutWindow
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+from app.styles import COLORS, PATHS
+from app.main import download_video, download_audio
 
+home = Path.home()
+downloads_path = home / "Downloads"
 
-# ==========================================
-# CONFIGURACIÓN
-# ==========================================
-COLORS = {
-    "bg_main_dark": "#222222",
-    "bg_bars_dark": "#1c1c1c",
-    "main_color": "#8B0000",
-    "secundary_color": "#463C3C",
-    "accent": "#F03030",
-    "texts_&_icons_dark": "#ffffff",
-    "bg_main_light": "#E3E3E3",
-    "bg_bars_light": "#F6F6F6",
-    "texts_&_icons_light": "#000000",
-    "placeholder_text": "#9E9A9A",
-    "input_background_light": "#807373",
-    "input_background_dark": "#463C3C",
-}
-
-if hasattr(sys, '_MEIPASS'):
-    BASE_DIR = Path(sys._MEIPASS)
-else:
-    BASE_DIR = Path(__file__).resolve().parent.parent
-
-PATHS = {
-    "logo": str(BASE_DIR / "resources" / "logo.png"),
-    "icon_menu_dark": str(BASE_DIR / "resources" / "menu_icon_dark.svg"),
-    "icon_menu_light": str(BASE_DIR / "resources" / "menu_icon_light.svg"),
-    "icon_close": str(BASE_DIR / "resources" / "menu_close_icon.svg"),
-    "about_icon_dark": str(BASE_DIR / "resources" / "about_icon_dark.svg"),
-    "about_icon_light": str(BASE_DIR / "resources" / "about_icon_light.svg"),
-    "download_icon": str(BASE_DIR / "resources" / "download_icon.svg"),
-    "dark_mode_icon": str(BASE_DIR / "resources" / "dark_mode_icon.svg"),
-    "light_mode_icon": str(BASE_DIR / "resources" / "light_mode_icon.svg"),
-    "logo_application": str(BASE_DIR / "resources" / "logo_application.svg"),
-}
+if not downloads_path.exists():
+    downloads_path = home
 
 # ==========================================
-# COMPONENTES MODULARES
+# MODULARS COMPONENTS
 # ==========================================
 
 class DownloadPage(QWidget):
-    def __init__(self, title, placeholder):
+    def __init__(self, title, placeholder, is_video=True):
         super().__init__()
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignCenter)
+        self.is_video = is_video
 
         self.logo_label = QLabel()
         logo_path = PATHS["logo"]
@@ -76,7 +50,6 @@ class DownloadPage(QWidget):
         self.input_line = QLineEdit()
         self.input_line.setPlaceholderText(placeholder)
         self.input_line.setFixedWidth(450)
-        self.input_line.setStyleSheet(f"""background-color: {COLORS['secundary_color']}; color: {COLORS['placeholder_text']};""")
         
         self.btn_action = QPushButton("Download")
         self.btn_action.setObjectName("btn_download")
@@ -85,8 +58,14 @@ class DownloadPage(QWidget):
         self.btn_action.setIconSize(QSize(20, 20))
         self.btn_action.setFixedWidth(150)
         self.btn_action.setFixedHeight(40)
+        self.btn_action.clicked.connect(self.handle_download)
         
-        
+        self.status_label = QLabel("")
+        self.status_label.setAlignment(Qt.AlignCenter)
+        layout.addSpacing(10)
+        layout.addWidget(self.status_label)
+
+
         layout.addWidget(self.logo_label, alignment=Qt.AlignCenter)
         layout.addSpacing(20)
         layout.addWidget(self.input_line)
@@ -94,16 +73,43 @@ class DownloadPage(QWidget):
         layout.addWidget(self.btn_action, alignment=Qt.AlignCenter)
         layout.addStretch()
         
+    def handle_download(self):
+        url = self.input_line.text()
+        parent = self.parent()
+        download_dir = getattr(parent, 'dir_input', None)
+        if download_dir:
+            download_dir = parent.dir_input.text()
+        
+        self.btn_action.setText("Downloading...")
+        self.status_label.setText("")
+        QApplication.processEvents()
+
+        success = False
+        if self.is_video:
+            quality = getattr(parent, 'quality_box', None)
+            if quality:
+                quality = parent.quality_box.currentText()
+            success = download_video(url, quality=quality, download_dir=download_dir)
+        else:
+            success = download_audio(url, download_dir=None)
+
+        if success:
+            carpeta = download_dir if download_dir else "Downloads folder"
+            self.status_label.setText(f"Downloaded in {carpeta}")
+        else:
+            self.status_label.setText("Error during download")
+
+        self.btn_action.setText("Download")
+
+
+        
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("VideoLeech")
         self.setWindowIcon(QIcon(PATHS["logo_application"]))
-        self.resize(800, 600)
-        # Construir UI primero, luego aplicar tema guardado (porque apply_theme
-        # modifica iconos de botones que se crean en init_ui)
+        self.resize(700, 450)
         self.init_ui()
-        # Persistencia del tema
         self.settings = QSettings("VideoLeech", "VideoLeech")
         saved = self.settings.value("theme", "dark")
         self.apply_theme(saved)
@@ -145,7 +151,7 @@ class MainWindow(QMainWindow):
                 padding: 8px;
                 color: {COLORS['texts_&_icons_dark']};
                 border-radius: 5px;
-                background-color: {COLORS['input_background_dark']};
+                background-color: {COLORS['input_bg_dark']};
             }}
             #Sidebar {{
                 background-color: {COLORS['bg_bars_dark']};
@@ -162,13 +168,13 @@ class MainWindow(QMainWindow):
             bg_main = COLORS['bg_main_light']
             bg_bars = COLORS['bg_bars_light']
             text = COLORS['texts_&_icons_light']
-            input_bg = COLORS['input_background_light']
+            input_bg = COLORS['input_bg_light']
             toggle_icon = PATHS.get('dark_mode_icon', PATHS.get('light_mode_icon'))
         else:
             bg_main = COLORS['bg_main_dark']
             bg_bars = COLORS['bg_bars_dark']
             text = COLORS['texts_&_icons_dark']
-            input_bg = COLORS['secundary_color']
+            input_bg = COLORS['input_bg_dark']
             toggle_icon = PATHS.get('light_mode_icon', PATHS.get('dark_mode_icon'))
 
         qss = f"""
@@ -209,22 +215,34 @@ class MainWindow(QMainWindow):
             padding: 8px; 
             color: {text}; 
             border-radius: 5px; 
-            background-color: {input_bg}; 
+            background-color: {COLORS['input_bg_light'] if theme == 'light' else COLORS['input_bg_dark']}; 
             }}
+
+            QLineEdit::placeholder {{ color: {COLORS['placeholder_text']}; }}
+
+            /* Asegurar que el texto dentro del sidebar sea legible en ambos temas */
+            #Sidebar, #Sidebar * {{ color: {text}; }}
+            #Sidebar QComboBox {{ background-color: {bg_bars}; color: {text}; }}
+            #Sidebar QComboBox QAbstractItemView {{ background-color: {bg_bars}; color: {text}; selection-background-color: {COLORS['accent']}; }}
+            
             
             #Sidebar {{ background-color: {bg_bars}; }}
             
             QPushButton#IconBtn:hover {{ background-color: {COLORS['accent']}; }}
+            
+            Qlabel#SidebarTitle-Config {{
+                font-weight: bold;
+                font-size: 11px;
+                color: {COLORS['texts_&_icons_dark'] if theme == 'dark' else COLORS['texts_&_icons_light']};
+            }}
         """
         self.setStyleSheet(qss)
 
-        # Actualizar icono del toggle si ya existe
         try:
             self.btn_dark_or_light_mode.setIcon(QIcon(toggle_icon))
         except Exception:
             pass
 
-        # Actualizar otros iconos según el tema
         try:
             if theme == 'light':
                 self.btn_menu.setIcon(QIcon(PATHS.get('icon_menu_light', PATHS.get('icon_menu_dark'))))
@@ -235,7 +253,6 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-        # Guardar preferencia
         try:
             self.settings.setValue('theme', theme)
         except Exception:
@@ -312,7 +329,7 @@ class MainWindow(QMainWindow):
         self.btn_about.setIcon(QIcon(PATHS["about_icon_light"]))
         self.btn_about.setIconSize(QSize(24, 24))
         self.btn_about.setFixedSize(36, 36)
-        
+        self.btn_about.clicked.connect(self.open_about)
 
         left_layout.addWidget(self.btn_dark_or_light_mode, alignment=Qt.AlignLeft)
         left_layout.addWidget(self.btn_about, alignment=Qt.AlignLeft)
@@ -324,8 +341,8 @@ class MainWindow(QMainWindow):
         self.setup_sidebar_content()
         
         self.content_stack = QStackedWidget()
-        self.page_video = DownloadPage("MP4", "Pega el enlace del video aquí...")
-        self.page_music = DownloadPage("MP3", "Pega el enlace de la canción aquí...")
+        self.page_video = DownloadPage("MP4", "Paste the url of the video here...", is_video=True)
+        self.page_music = DownloadPage("MP3", "Paste the url of the song here...", is_video=False)
         self.content_stack.addWidget(self.page_video)
         self.content_stack.addWidget(self.page_music)
 
@@ -340,7 +357,6 @@ class MainWindow(QMainWindow):
         self.tabs_video.clicked.connect(lambda: self.switch_page(0))
         self.tabs_music.clicked.connect(lambda: self.switch_page(1))
 
-        # Asegurar estado inicial de la UI
         self.switch_page(0)
         
     def toggle_sidebar(self):
@@ -358,15 +374,23 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(self.sidebar)
         layout.setContentsMargins(20, 20, 20, 20)
         
-        lbl = QLabel("CONFIGURACIÓN")
-        lbl.setStyleSheet(f"color: {COLORS['texts_&_icons_dark']}; font-weight: bold; font-size: 11px;")
+        lbl = QLabel("Configuration")
+        lbl.setObjectName("SidebarTitle-Config")
         
         self.quality_box = QComboBox()
-        self.quality_box.addItems(["Máxima Calidad", "1080p", "720p", "480p"])
+        self.quality_box.addItems(["Maximum Quality", "1080p", "720p", "480p"])
         
+
+
         layout.addWidget(lbl)
         layout.addWidget(self.quality_box)
+        layout.addSpacing(20)
         layout.addStretch()
+    
+    def select_download_dir(self):
+        folder = QFileDialog.getExistingDirectory(self, "Selecciona carpeta de descarga", self.dir_input.text())
+        if folder:
+            self.dir_input.setText(folder)
     
     def switch_page(self, index):
         self.content_stack.setCurrentIndex(index)
@@ -381,6 +405,34 @@ class MainWindow(QMainWindow):
         self.tabs_music.style().unpolish(self.tabs_music)
         self.tabs_music.style().polish(self.tabs_music)
         self.setStyleSheet(self.styleSheet())
+
+        try:
+            if index != 0 and self.sidebar.width() > 0:
+                self.sidebar_anim = QPropertyAnimation(self.sidebar, b"minimumWidth")
+                self.sidebar_anim.setDuration(250)
+                self.sidebar_anim.setStartValue(self.sidebar.width())
+                self.sidebar_anim.setEndValue(0)
+                self.sidebar_anim.setEasingCurve(QEasingCurve.InOutQuart)
+                self.sidebar_anim.start()
+        except Exception:
+            try:
+                self.sidebar.setFixedWidth(0)
+            except Exception:
+                pass
+
+    def open_about(self):
+        if not hasattr(self, "about_window") or self.about_window is None:
+            self.about_window = AboutWindow(parent=self)
+            self.about_window.setAttribute(Qt.WA_DeleteOnClose, False)
+        try:
+            if hasattr(self.about_window, 'apply_theme'):
+                self.about_window.apply_theme(getattr(self, "theme", "dark"))
+        except Exception:
+            pass
+        self.about_window.setWindowModality(Qt.ApplicationModal)
+        self.about_window.show()
+        self.about_window.raise_()
+        self.about_window.activateWindow()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
