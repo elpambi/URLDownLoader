@@ -4,15 +4,16 @@ import os
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QLabel, QPushButton, QLineEdit, 
                              QStackedWidget, QFrame, QComboBox, QFileDialog)
-from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QSize, QSettings
+from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QSize, QSettings, QThread
 from PySide6.QtGui import QPixmap, QIcon
-from about_window import AboutWindow
+from .about_window import AboutWindow
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 from app.styles import COLORS, PATHS
-from app.main import download_video, download_audio
+from app.main import download_video, download_audio, default_download_dir
+from app.core.downloader import DownloadWorker
 
 home = Path.home()
-downloads_path = home / "Downloads"
+downloads_path = Path(default_download_dir())
 
 if not downloads_path.exists():
     downloads_path = home
@@ -79,27 +80,30 @@ class DownloadPage(QWidget):
         download_dir = getattr(parent, 'dir_input', None)
         if download_dir:
             download_dir = parent.dir_input.text()
-        
-        self.btn_action.setText("Downloading...")
-        self.status_label.setText("")
-        QApplication.processEvents()
-
-        success = False
-        if self.is_video:
-            quality = getattr(parent, 'quality_box', None)
-            if quality:
-                quality = parent.quality_box.currentText()
-            success = download_video(url, quality=quality, download_dir=download_dir)
-        else:
-            success = download_audio(url, download_dir=None)
-
-        if success:
-            carpeta = download_dir if download_dir else "Downloads folder"
-            self.status_label.setText(f"Downloaded in {carpeta}")
-        else:
-            self.status_label.setText("Error during download")
-
-        self.btn_action.setText("Download")
+        if not download_dir:
+            download_dir = str(default_download_dir())
+        try:
+            mw = self.window()
+            if hasattr(mw, 'start_download'):
+                mw.start_download(url=url, is_video=self.is_video, quality=getattr(parent, 'quality_box', None) and parent.quality_box.currentText() or None, download_dir=download_dir)
+            else:
+                self.btn_action.setText("Downloading...")
+                self.status_label.setText("")
+                QApplication.processEvents()
+                success = False
+                if self.is_video:
+                    success = download_video(url, quality=None, download_dir=download_dir)
+                else:
+                    success = download_audio(url, download_dir=download_dir)
+                if success:
+                    carpeta = download_dir if download_dir else str(default_download_dir())
+                    self.status_label.setText(f"Downloaded in {carpeta}")
+                else:
+                    self.status_label.setText("Error during download")
+                self.btn_action.setText("Download")
+        except Exception as e:
+            self.status_label.setText(f"Error: {e}")
+            self.btn_action.setText("Download")
 
 
         
@@ -391,6 +395,49 @@ class MainWindow(QMainWindow):
         folder = QFileDialog.getExistingDirectory(self, "Selecciona carpeta de descarga", self.dir_input.text())
         if folder:
             self.dir_input.setText(folder)
+
+    def start_download(self, url: str, is_video: bool = True, quality: str | None = None, download_dir: str | None = None):
+        """Crear QThread y DownloadWorker para ejecutar la descarga en background."""
+        if not url:
+            widget = self.content_stack.currentWidget()
+            widget.status_label.setText("Please provide a URL")
+            return
+
+        widget = self.content_stack.currentWidget()
+        try:
+            widget.btn_action.setText("Downloading...")
+        except Exception:
+            pass
+
+        if not download_dir:
+            download_dir = str(default_download_dir())
+
+        thread = QThread()
+        worker = DownloadWorker(url=url, is_video=is_video, quality=quality, download_dir=download_dir)
+        worker.moveToThread(thread)
+
+        thread.started.connect(worker.run)
+        worker.progress.connect(lambda msg: widget.status_label.setText(msg))
+
+        def _on_finished_ui(success: bool):
+            try:
+                widget.btn_action.setText("Download")
+            except Exception:
+                pass
+            if success:
+                widget.status_label.setText("Download completed")
+            else:
+                widget.status_label.setText("Download failed")
+
+        worker.finished.connect(_on_finished_ui)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+
+        self._dl_thread = thread
+        self._dl_worker = worker
+
+        thread.start()
     
     def switch_page(self, index):
         self.content_stack.setCurrentIndex(index)

@@ -39,3 +39,9 @@ PATHS = {
     "github_icon_dark": str(BASE_DIR / "resources" / "github_icon_dark.svg"),
 
 }
+
+# Normalizar: si la ruta no existe, devolver cadena vacía para evitar QIcon/QPixmap errores
+for k, v in list(PATHS.items()):
+    p = Path(v)
+    if not p.exists():
+        PATHS[k] = ""
