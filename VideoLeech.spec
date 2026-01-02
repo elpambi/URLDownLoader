@@ -5,7 +5,7 @@ a = Analysis(
     ['run_app.py'],
     pathex=['.', 'src'],
     binaries=[],
-    datas=[],
+    datas=[('src/app/resources', 'resources')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
